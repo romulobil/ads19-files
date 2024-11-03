@@ -2,7 +2,6 @@
 
 CONTAINERD_VERSION="1.6.20-1"
 DOCKER_VERSION="5:23.0.5-1~debian.$(cat /etc/debian_version | cut -d'.' -f1)~$(lsb_release -cs)"
-K8S_VERSION="1.27.12-1.1"
 
 MYIFACE="eth1"
 MYIP="$( ip -4 addr show ${MYIFACE} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' )"
@@ -53,12 +52,12 @@ curl -fsSL https://download.docker.com/linux/debian/gpg | \
 echo \
   "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian \
   $(lsb_release -cs) stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+  tee /etc/apt/sources.list.d/docker.list > /dev/null
 apt update
 apt install -y containerd.io=${CONTAINERD_VERSION} \
                docker-ce=${DOCKER_VERSION}      \
                docker-ce-cli=${DOCKER_VERSION}
-cat <<EOF | sudo tee /etc/docker/daemon.json
+cat <<EOF | tee /etc/docker/daemon.json
 {
   "log-opts": {
     "max-size": "100m"
@@ -67,14 +66,14 @@ cat <<EOF | sudo tee /etc/docker/daemon.json
 EOF
 
 # Enable and configure required modules
-cat <<EOF | sudo tee /etc/modules-load.d/containerd.conf
+cat <<EOF | tee /etc/modules-load.d/containerd.conf
 overlay
 br_netfilter
 EOF
 modprobe overlay
 modprobe br_netfilter
 
-# install cri-dockerd
+# Install cri-dockerd
 wget https://github.com/Mirantis/cri-dockerd/releases/download/v0.3.1/cri-dockerd_0.3.1.3-0.debian-bullseye_amd64.deb
 apt install -y ./cri-dockerd_0.3.1.3-0.debian-bullseye_amd64.deb
 
@@ -84,7 +83,7 @@ systemctl restart docker
 systemctl enable docker
 
 # Enable bridged traffic through iptables
-cat <<EOF | sudo tee /etc/sysctl.d/99-kubernetes-cri.conf
+cat <<EOF | tee /etc/sysctl.d/99-kubernetes-cri.conf
 net.bridge.bridge-nf-call-ip6tables = 1
 net.bridge.bridge-nf-call-iptables = 1
 net.ipv4.ip_forward = 1
@@ -99,20 +98,31 @@ containerd config default | \
 
 # Disable swap
 swapoff -a
-sed -i 's/^\(.*vg-swap.*\)/#\1/' /etc/fstab
+sed -i '/ swap / s/^/#/' /etc/fstab
 
-# Install kubeadm and friends
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.27/deb/Release.key | sudo gpg --dearmor -o /usr/share/keyrings/kubernetes-apt-keyring.gpg
-echo 'deb [signed-by=/usr/share/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.27/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+# Install kubeadm, kubelet, and kubectl using the updated repository
 apt update
-apt install -y kubelet=${K8S_VERSION} \
-               kubeadm=${K8S_VERSION} \
-               kubectl=${K8S_VERSION}
-apt-mark hold kubelet \
-              kubeadm \
-              kubectl
+apt install -y apt-transport-https ca-certificates curl gnupg
 
-# Set correct IP address for kubelet, also use cri-dockerd
+# Create the keyrings directory if it doesn't exist (for Debian 11 and earlier)
+mkdir -p /etc/apt/keyrings
+
+# Download and add the Kubernetes GPG key
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | \
+  gpg --dearmor -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
+chmod 644 /etc/apt/keyrings/kubernetes-archive-keyring.gpg  # Allow unprivileged APT programs to read this keyring
+
+# Add the Kubernetes apt repository
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /' | \
+  tee /etc/apt/sources.list.d/kubernetes.list
+chmod 644 /etc/apt/sources.list.d/kubernetes.list  # Helps tools such as command-not-found to work correctly
+
+# Update package listings and install Kubernetes components
+apt update
+apt install -y kubelet kubeadm kubectl
+apt-mark hold kubelet kubeadm kubectl
+
+# Set correct IP address for kubelet and use cri-dockerd
 echo "KUBELET_EXTRA_ARGS=\"--node-ip=${MYIP} --container-runtime-endpoint=unix:///var/run/cri-dockerd.sock\"" >> /etc/default/kubelet
 systemctl restart kubelet
 
@@ -128,7 +138,7 @@ if [ "$1" == "master" ]; then
     --apiserver-cert-extra-sans=${MYIP} \
     --cri-socket unix:///var/run/cri-dockerd.sock \
     --node-name="$( hostname )" \
-    --pod-network-cidr=10.32.0.0/12 \
+    --pod-network-cidr=192.168.0.0/16 \
     --ignore-preflight-errors="all"
 
   # Configure kubectl
@@ -137,7 +147,7 @@ if [ "$1" == "master" ]; then
   chown $(id -u):$(id -g) $HOME/.kube/config
 
   # Install Calico CNI plugin
-  kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.1/manifests/calico.yaml
+  kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
 
   # Create kubeadm join token
   join_command="$( kubeadm token create --print-join-command )"
@@ -151,7 +161,6 @@ if [ "$1" == "master" ]; then
 else
   # Copy join token and enter cluster
   sudo -u vagrant scp -i /home/vagrant/.ssh/tmpkey vagrant@s2-master-1:/opt/join_token /tmp
-  echo -n " --cri-socket unix:///var/run/cri-dockerd.sock" >> /tmp/join_token
   sh /tmp/join_token
   rm -f /tmp/join_token
 fi
