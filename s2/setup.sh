@@ -2,7 +2,7 @@
 
 CONTAINERD_VERSION="1.6.20-1"
 DOCKER_VERSION="5:23.0.5-1~debian.$(cat /etc/debian_version | cut -d'.' -f1)~$(lsb_release -cs)"
-K8S_VERSION="1.27.12-1.1"
+K8S_VERSION="1.30.0-1.1"
 
 MYIFACE="eth1"
 MYIP="$( ip -4 addr show ${MYIFACE} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' )"
@@ -102,8 +102,8 @@ swapoff -a
 sed -i 's/^\(.*vg-swap.*\)/#\1/' /etc/fstab
 
 # Install kubeadm and friends
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.27/deb/Release.key | sudo gpg --dearmor -o /usr/share/keyrings/kubernetes-apt-keyring.gpg
-echo 'deb [signed-by=/usr/share/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.27/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | sudo gpg --dearmor -o /usr/share/keyrings/kubernetes-apt-keyring.gpg
+echo 'deb [signed-by=/usr/share/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
 apt update
 apt install -y kubelet=${K8S_VERSION} \
                kubeadm=${K8S_VERSION} \
